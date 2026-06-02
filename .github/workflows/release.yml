@@ -16,6 +16,7 @@ jobs:
     outputs:
       project_version: ${{ steps.project.outputs.project_version }}
       artifact_id: ${{ steps.project.outputs.artifact_id }}
+      agent_artifact_id: ${{ steps.project.outputs.agent_artifact_id }}
       should_release: ${{ steps.project.outputs.should_release }}
     steps:
       - name: Checkout
@@ -36,6 +37,8 @@ jobs:
 
           PROJECT_VERSION="$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)"
           ARTIFACT_ID="$(mvn -q -DforceStdout help:evaluate -Dexpression=project.artifactId)"
+          AGENT_VERSION="$(mvn -q -DforceStdout -f docker-log-agent/pom.xml -Drevision="${PROJECT_VERSION}" help:evaluate -Dexpression=project.version)"
+          AGENT_ARTIFACT_ID="$(mvn -q -DforceStdout -f docker-log-agent/pom.xml -Drevision="${PROJECT_VERSION}" help:evaluate -Dexpression=project.artifactId)"
           TAG_NAME="${GITHUB_REF_NAME}"
           SHOULD_RELEASE=false
 
@@ -46,12 +49,14 @@ jobs:
           {
             echo "project_version=${PROJECT_VERSION}"
             echo "artifact_id=${ARTIFACT_ID}"
+            echo "agent_artifact_id=${AGENT_ARTIFACT_ID}"
             echo "should_release=${SHOULD_RELEASE}"
           } >> "${GITHUB_OUTPUT}"
 
           {
             echo "### Release validation"
             echo "- POM version: \`${PROJECT_VERSION}\`"
+            echo "- Docker Log Agent version: \`${AGENT_VERSION}\`"
             echo "- Tag: \`${TAG_NAME}\`"
             echo "- Release enabled: \`${SHOULD_RELEASE}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
@@ -64,6 +69,7 @@ jobs:
     env:
       PROJECT_VERSION: ${{ needs.validate.outputs.project_version }}
       ARTIFACT_ID: ${{ needs.validate.outputs.artifact_id }}
+      AGENT_ARTIFACT_ID: ${{ needs.validate.outputs.agent_artifact_id }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -78,7 +84,9 @@ jobs:
       - name: Build JAR
         env:
           AIH_API_KEY_ENCRYPTION_KEY: release-workflow-test-encryption-key
-        run: mvn -B clean package
+        run: |
+          mvn -B clean package
+          mvn -B -f docker-log-agent/pom.xml -Drevision="${PROJECT_VERSION}" clean package
 
       - name: Prepare release artifact
         id: artifact
@@ -87,15 +95,23 @@ jobs:
           set -euo pipefail
 
           JAR_PATH="target/${ARTIFACT_ID}-${PROJECT_VERSION}.jar"
+          AGENT_JAR_PATH="docker-log-agent/target/${AGENT_ARTIFACT_ID}-${PROJECT_VERSION}.jar"
           if [[ ! -f "${JAR_PATH}" ]]; then
             echo "Expected JAR not found: ${JAR_PATH}" >&2
+            exit 1
+          fi
+          if [[ ! -f "${AGENT_JAR_PATH}" ]]; then
+            echo "Expected agent JAR not found: ${AGENT_JAR_PATH}" >&2
             exit 1
           fi
 
           mkdir -p dist
           RELEASE_JAR="dist/${ARTIFACT_ID}-${PROJECT_VERSION}.jar"
+          AGENT_RELEASE_JAR="dist/${AGENT_ARTIFACT_ID}-${PROJECT_VERSION}.jar"
           cp "${JAR_PATH}" "${RELEASE_JAR}"
+          cp "${AGENT_JAR_PATH}" "${AGENT_RELEASE_JAR}"
           echo "jar_path=${RELEASE_JAR}" >> "${GITHUB_OUTPUT}"
+          echo "agent_jar_path=${AGENT_RELEASE_JAR}" >> "${GITHUB_OUTPUT}"
 
       - name: Prepare image tags
         id: image
@@ -111,7 +127,9 @@ jobs:
           REPOSITORY="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
           REPOSITORY_NAME="${REPOSITORY##*/}"
           GHCR_IMAGE="ghcr.io/${REPOSITORY}"
+          GHCR_AGENT_IMAGE="ghcr.io/${REPOSITORY}-docker-agent"
           IMAGE_TAGS="${GHCR_IMAGE}:${PROJECT_VERSION}"$'\n'"${GHCR_IMAGE}:latest"
+          AGENT_IMAGE_TAGS="${GHCR_AGENT_IMAGE}:${PROJECT_VERSION}"$'\n'"${GHCR_AGENT_IMAGE}:latest"
           EXTRA_ENABLED=false
           EXTRA_REGISTRY_CLEAN=""
 
@@ -125,7 +143,9 @@ jobs:
             EXTRA_REGISTRY_CLEAN="$(echo "${EXTRA_REGISTRY}" | sed -E 's#^https?://##; s#/+$##' | tr '[:upper:]' '[:lower:]')"
             EXTRA_NAMESPACE_CLEAN="$(echo "${EXTRA_REGISTRY_NAMESPACE}" | sed -E 's#^/+##; s#/+$##' | tr '[:upper:]' '[:lower:]')"
             EXTRA_IMAGE="${EXTRA_REGISTRY_CLEAN}/${EXTRA_NAMESPACE_CLEAN}/${REPOSITORY_NAME}"
+            EXTRA_AGENT_IMAGE="${EXTRA_REGISTRY_CLEAN}/${EXTRA_NAMESPACE_CLEAN}/${REPOSITORY_NAME}-docker-agent"
             IMAGE_TAGS="${IMAGE_TAGS}"$'\n'"${EXTRA_IMAGE}:${PROJECT_VERSION}"$'\n'"${EXTRA_IMAGE}:latest"
+            AGENT_IMAGE_TAGS="${AGENT_IMAGE_TAGS}"$'\n'"${EXTRA_AGENT_IMAGE}:${PROJECT_VERSION}"$'\n'"${EXTRA_AGENT_IMAGE}:latest"
           fi
 
           {
@@ -133,6 +153,9 @@ jobs:
             echo "extra_registry=${EXTRA_REGISTRY_CLEAN}"
             echo "tags<<EOF"
             echo "${IMAGE_TAGS}"
+            echo "EOF"
+            echo "agent_tags<<EOF"
+            echo "${AGENT_IMAGE_TAGS}"
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
 
@@ -167,18 +190,36 @@ jobs:
             org.opencontainers.image.version=${{ env.PROJECT_VERSION }}
             org.opencontainers.image.revision=${{ github.sha }}
 
+      - name: Build and push Docker agent image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker-log-agent/Dockerfile
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ steps.image.outputs.agent_tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ env.PROJECT_VERSION }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          build-args: |
+            PROJECT_VERSION=${{ env.PROJECT_VERSION }}
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           JAR_PATH: ${{ steps.artifact.outputs.jar_path }}
+          AGENT_JAR_PATH: ${{ steps.artifact.outputs.agent_jar_path }}
         shell: bash
         run: |
           set -euo pipefail
 
           if gh release view "${PROJECT_VERSION}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release upload "${PROJECT_VERSION}" "${JAR_PATH}" --repo "${GITHUB_REPOSITORY}" --clobber
+            gh release upload "${PROJECT_VERSION}" "${AGENT_JAR_PATH}" --repo "${GITHUB_REPOSITORY}" --clobber
           else
-            gh release create "${PROJECT_VERSION}" "${JAR_PATH}" \
+            gh release create "${PROJECT_VERSION}" "${JAR_PATH}" "${AGENT_JAR_PATH}" \
               --repo "${GITHUB_REPOSITORY}" \
               --title "As I Have Written ${PROJECT_VERSION}" \
               --generate-notes

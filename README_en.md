@@ -100,6 +100,8 @@ The release workflow publishes images to GitHub Container Registry:
 ```text
 ghcr.io/futureprayer/as-i-have-written:<version>
 ghcr.io/futureprayer/as-i-have-written:latest
+ghcr.io/futureprayer/as-i-have-written-docker-agent:<version>
+ghcr.io/futureprayer/as-i-have-written-docker-agent:latest
 ```
 
 Users in mainland China can also use the accelerated mirror:
@@ -112,6 +114,7 @@ You can also build an image locally:
 
 ```bash
 docker build -t as-i-have-written:local .
+docker build -f docker-log-agent/Dockerfile -t as-i-have-written-docker-agent:local .
 ```
 
 ## Configuration
@@ -121,6 +124,7 @@ The application reads `src/main/resources/application.yml` and environment varia
 | Environment variable | Default | Description |
 | --- | --- | --- |
 | `SERVER_PORT` | `25091` | HTTP server port. |
+| `SERVER_HTTP2_ENABLED` | `false` | Enables HTTP/2; without TLS this uses h2c, which is usually best behind an h2c-capable reverse proxy. |
 | `MONGODB_URI` | `mongodb://localhost:27017/as_i_have_written` | MongoDB connection URI. |
 | `AIH_ADMIN_USERNAME` | `admin` | WebUI administrator username. |
 | `AIH_ADMIN_PASSWORD` | `admin123` | WebUI administrator password. Change this outside local development. |
@@ -142,6 +146,14 @@ MongoDB collections:
 - `log_sources`: API key bindings for `serviceName + instanceName`.
 
 Spring Data MongoDB creates indexes automatically. MongoDB stores application-generated `tokens` and performs ordinary indexed matching; it does not perform full-text tokenization.
+
+## Performance Tuning
+
+- Set `SERVER_HTTP2_ENABLED=true` to let h2c-capable or TLS HTTP/2 clients reuse connections and reduce connection overhead during high-concurrency batch ingestion. The Docker Log Agent's HTTP client prefers HTTP/2 and falls back to HTTP/1.1 when the server or proxy does not support it.
+- Prefer `/api/logs/batch` or NDJSON stream ingestion. Avoid high-frequency single-log calls to `/api/logs`.
+- Server throughput is mostly shaped by `AIH_INGEST_BATCH_SIZE`, `AIH_INGEST_FLUSH_INTERVAL`, `AIH_INGEST_QUEUE_CAPACITY`, and MongoDB write capacity. Increase batch and queue sizes for heavier traffic; shorten the flush interval when lower latency matters more.
+- Docker Log Agent defaults to `AIH_AGENT_BATCH_SIZE=500`, matching the server writer batch size. For high-throughput multi-container hosts, increase `AIH_AGENT_QUEUE_CAPACITY`; larger queues also mean more Agent memory usage.
+- Keep MongoDB in the same region or on a low-latency network, and reserve enough IOPS for the database behind `log_entries`. WebUI query performance depends on indexes and time range, so keep the default query window short in production.
 
 ## Ingestion API
 
@@ -550,6 +562,111 @@ export SPRING_PROFILES_ACTIVE='prod'
 
 This sample appender does not persist or retry failed sends. If the remote endpoint is unavailable, returns non-2xx, or the queue is full, logs are dropped while local console output remains available. For stronger delivery guarantees, use MQ or a client-side durable buffer.
 
+## Docker Container Log Agent
+
+To collect stdout/stderr logs from Docker containers, use the built-in Docker Log Agent. It collects container runtime logs, not historical logs from the image itself. The Agent discovers containers through the Docker socket and only collects containers that explicitly opt in:
+
+```text
+aih.logs.enabled=true
+```
+
+The Agent resolves each container's `aih.logs.api-key-ref` to a real API key, then writes logs through `/api/logs/batch`. Do not put plaintext API keys in Docker labels; labels are visible through the Docker API and operational tooling.
+
+### Agent Configuration
+
+| Environment variable | Default | Description |
+| --- | --- | --- |
+| `AIH_AGENT_ENDPOINT` | `http://localhost:25091/api/logs/batch` | Batch ingestion endpoint. |
+| `AIH_AGENT_API_KEY_FILE` | `/run/secrets/aih-agent-api-keys.properties` | API key reference file in Java properties format. |
+| `AIH_AGENT_API_KEYS` | empty | Quick inline config, formatted as `ref1=key1;ref2=key2`; file config has higher priority. |
+| `AIH_AGENT_DEFAULT_ENVIRONMENT` | `local` | Environment used when a container does not provide one. |
+| `AIH_AGENT_LOG_REGEX` | empty | Global log parsing regex using Java named groups. |
+| `AIH_AGENT_LOG_REGEX_METADATA_GROUPS` | empty | Extra regex group names to copy into metadata, comma-separated. |
+| `AIH_AGENT_BATCH_SIZE` | `500` | Batch send size. |
+| `AIH_AGENT_QUEUE_CAPACITY` | `10000` | Outbound queue capacity. |
+| `AIH_AGENT_FLUSH_INTERVAL` | `1s` | Batch flush interval. |
+| `AIH_AGENT_REQUEST_TIMEOUT` | `5s` | Ingestion request timeout. |
+| `AIH_AGENT_DOCKER_HOST` | empty | Optional Docker Engine endpoint; when empty, docker-java uses its default discovery rules. |
+
+Container labels:
+
+| Label | Description |
+| --- | --- |
+| `aih.logs.enabled=true` | Enable collection. |
+| `aih.logs.api-key-ref=<ref>` | Required. Resolves the real key from the Agent API key map. |
+| `aih.logs.service=<service>` | Optional. Defaults to Compose service, then container name. |
+| `aih.logs.instance=<instance>` | Optional. Defaults to container name. |
+| `aih.logs.environment=<environment>` | Optional. Defaults to `AIH_AGENT_DEFAULT_ENVIRONMENT`. |
+| `aih.logs.regex=<regex>` | Optional. Overrides the global regex. |
+| `aih.logs.regex-metadata-groups=<names>` | Optional. Overrides global metadata groups. |
+
+Regex parsing recognizes these built-in named groups: `time`, `level`, `traceId`, `spanId`, and `message`. `time` must be ISO-8601; `level` accepts only `TRACE`, `DEBUG`, `INFO`, `WARN`, and `ERROR`. Without a regex, or when a line does not match, the full line becomes `message`, stdout maps to `INFO`, and stderr maps to `ERROR`.
+
+### Use with docker run
+
+Create an API key reference file:
+
+```properties
+payment=replace-with-payment-api-key
+order=replace-with-order-api-key
+```
+
+Start the Agent:
+
+```bash
+docker run -d --name aih-docker-agent \
+  --add-host=host.docker.internal:host-gateway \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v "$PWD/aih-agent-api-keys.properties:/run/secrets/aih-agent-api-keys.properties:ro" \
+  -e AIH_AGENT_ENDPOINT='http://host.docker.internal:25091/api/logs/batch' \
+  -e AIH_AGENT_DEFAULT_ENVIRONMENT='prod' \
+  -e AIH_AGENT_LOG_REGEX='^(?<time>\S+) (?<level>\w+) trace=(?<traceId>\S+) span=(?<spanId>\S+) (?<message>.*)$' \
+  ghcr.io/futureprayer/as-i-have-written-docker-agent:latest
+```
+
+Start an application container to collect:
+
+```bash
+docker run -d --name payment-api \
+  --label aih.logs.enabled=true \
+  --label aih.logs.api-key-ref=payment \
+  --label aih.logs.service=payment \
+  --label aih.logs.instance=payment-api-1 \
+  --label aih.logs.environment=prod \
+  example/payment-api:latest
+```
+
+### Use with Docker Compose
+
+```yaml
+services:
+  aih-agent:
+    image: ghcr.io/futureprayer/as-i-have-written-docker-agent:latest
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      AIH_AGENT_ENDPOINT: http://host.docker.internal:25091/api/logs/batch
+      AIH_AGENT_DEFAULT_ENVIRONMENT: prod
+      AIH_AGENT_LOG_REGEX: '^(?<time>\S+) (?<level>\w+) trace=(?<traceId>\S+) span=(?<spanId>\S+) (?<message>.*)$'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./aih-agent-api-keys.properties:/run/secrets/aih-agent-api-keys.properties:ro
+    labels:
+      aih.logs.agent: "true"
+    restart: unless-stopped
+
+  payment-api:
+    image: example/payment-api:latest
+    labels:
+      aih.logs.enabled: "true"
+      aih.logs.api-key-ref: payment
+      aih.logs.service: payment
+      aih.logs.instance: payment-api-1
+      aih.logs.environment: prod
+```
+
+The Agent writes `containerId`, `containerName`, `image`, `stream`, `composeProject`, `composeService`, and safe Docker labels into metadata. It follows only new logs after startup, does not backfill history, and does not persist offsets. The Docker socket is highly privileged; in production, run the Agent on controlled hosts or restrict Docker API access with docker-socket-proxy.
+
 ## WebUI
 
 Open:
@@ -615,8 +732,8 @@ git push origin 1.0.0
 
 Release outputs:
 
-- Docker image: published to GHCR.
-- JAR file: uploaded to the matching GitHub Release.
+- Docker images: both the server and Docker Log Agent are published to GHCR.
+- JAR files: both the server and Docker Log Agent are uploaded to the matching GitHub Release.
 
 To also push the image to an extra private Docker registry, configure these GitHub Repository secrets:
 
@@ -632,6 +749,8 @@ All four secrets must be configured to enable the extra push. Extra image names 
 ```text
 <EXTRA_REGISTRY>/<EXTRA_REGISTRY_NAMESPACE>/as-i-have-written:<version>
 <EXTRA_REGISTRY>/<EXTRA_REGISTRY_NAMESPACE>/as-i-have-written:latest
+<EXTRA_REGISTRY>/<EXTRA_REGISTRY_NAMESPACE>/as-i-have-written-docker-agent:<version>
+<EXTRA_REGISTRY>/<EXTRA_REGISTRY_NAMESPACE>/as-i-have-written-docker-agent:latest
 ```
 
 ## Security

@@ -100,6 +100,8 @@ Release 工作流会将镜像发布到 GitHub Container Registry：
 ```text
 ghcr.io/futureprayer/as-i-have-written:<version>
 ghcr.io/futureprayer/as-i-have-written:latest
+ghcr.io/futureprayer/as-i-have-written-docker-agent:<version>
+ghcr.io/futureprayer/as-i-have-written-docker-agent:latest
 ```
 
 中国大陆用户也可以使用加速镜像：
@@ -112,6 +114,7 @@ swr.cn-east-3.myhuaweicloud.com/suhoan/as-i-have-written:latest
 
 ```bash
 docker build -t as-i-have-written:local .
+docker build -f docker-log-agent/Dockerfile -t as-i-have-written-docker-agent:local .
 ```
 
 ## 配置
@@ -121,6 +124,7 @@ docker build -t as-i-have-written:local .
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `SERVER_PORT` | `25091` | HTTP 服务端口。 |
+| `SERVER_HTTP2_ENABLED` | `false` | 是否启用 HTTP/2；未启用 TLS 时使用 h2c，通常适合放在支持 h2c 的反向代理后。 |
 | `MONGODB_URI` | `mongodb://localhost:27017/as_i_have_written` | MongoDB 连接地址。 |
 | `AIH_ADMIN_USERNAME` | `admin` | WebUI 管理员用户名。 |
 | `AIH_ADMIN_PASSWORD` | `admin123` | WebUI 管理员密码。非本地环境必须修改。 |
@@ -142,6 +146,14 @@ MongoDB 集合：
 - `log_sources`：`serviceName + instanceName` 对应的 API Key 绑定。
 
 Spring Data MongoDB 会自动创建索引。MongoDB 只保存应用生成后的 `tokens` 并执行普通索引匹配，不负责全文分词。
+
+## 性能调优
+
+- 启用 `SERVER_HTTP2_ENABLED=true` 可以让支持 h2c 或 TLS HTTP/2 的客户端复用连接、减少高并发批量写入时的连接开销。Docker Log Agent 的 HTTP 客户端会优先使用 HTTP/2，并在服务端或代理不支持时回退到 HTTP/1.1。
+- 写入侧优先使用 `/api/logs/batch` 或 NDJSON stream，不建议高频逐条调用 `/api/logs`。
+- 服务端吞吐主要受 `AIH_INGEST_BATCH_SIZE`、`AIH_INGEST_FLUSH_INTERVAL`、`AIH_INGEST_QUEUE_CAPACITY` 和 MongoDB 写入能力影响。日志量较高时可以增大 batch 和 queue；如果更看重低延迟，可以缩短 flush interval。
+- Docker Log Agent 默认 `AIH_AGENT_BATCH_SIZE=500`，和服务端默认写入批大小一致。多容器高吞吐场景可提高 `AIH_AGENT_QUEUE_CAPACITY`，但队列越大，Agent 进程内存占用也越高。
+- MongoDB 建议放在同机房或低延迟网络中，并为 `log_entries` 所在数据库预留足够 IOPS。WebUI 查询性能依赖已有索引和查询范围，生产环境建议保留较短默认时间窗口。
 
 ## 写入 API
 
@@ -550,6 +562,111 @@ export SPRING_PROFILES_ACTIVE='prod'
 
 示例 appender 不做持久化重试：远端不可用、HTTP 非 2xx 或队列已满时会丢弃日志并保留本地控制台输出。需要强可靠投递时，建议使用 MQ 或业务侧本地缓冲方案。
 
+## Docker 容器日志 Agent
+
+如果要采集 Docker 容器的 stdout/stderr 日志，可以使用内置 Docker Log Agent。它采集的是容器运行时日志，不是镜像本身的历史日志。Agent 通过 Docker socket 发现容器，并只采集显式开启的容器：
+
+```text
+aih.logs.enabled=true
+```
+
+Agent 使用每个容器的 `aih.logs.api-key-ref` 查找真实 API Key，再调用 `/api/logs/batch` 写入日志。不要把明文 API Key 写到 Docker label 中；label 会被 Docker API 和运维工具直接看到。
+
+### Agent 配置
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `AIH_AGENT_ENDPOINT` | `http://localhost:25091/api/logs/batch` | 日志批量写入地址。 |
+| `AIH_AGENT_API_KEY_FILE` | `/run/secrets/aih-agent-api-keys.properties` | API Key 引用文件，格式为 Java properties。 |
+| `AIH_AGENT_API_KEYS` | 空 | 快速配置，格式 `ref1=key1;ref2=key2`；文件配置优先级更高。 |
+| `AIH_AGENT_DEFAULT_ENVIRONMENT` | `local` | 容器未指定环境时使用。 |
+| `AIH_AGENT_LOG_REGEX` | 空 | 全局日志解析正则，使用 Java named groups。 |
+| `AIH_AGENT_LOG_REGEX_METADATA_GROUPS` | 空 | 需要写入 metadata 的额外正则分组名，逗号分隔。 |
+| `AIH_AGENT_BATCH_SIZE` | `500` | 批量发送大小。 |
+| `AIH_AGENT_QUEUE_CAPACITY` | `10000` | 出站队列容量。 |
+| `AIH_AGENT_FLUSH_INTERVAL` | `1s` | 批量发送刷新间隔。 |
+| `AIH_AGENT_REQUEST_TIMEOUT` | `5s` | 写入接口请求超时。 |
+| `AIH_AGENT_DOCKER_HOST` | 空 | 可选 Docker Engine 地址；留空时使用 docker-java 默认发现规则。 |
+
+容器 labels：
+
+| Label | 说明 |
+| --- | --- |
+| `aih.logs.enabled=true` | 启用采集。 |
+| `aih.logs.api-key-ref=<ref>` | 必填，从 Agent API Key 映射中查找真实 key。 |
+| `aih.logs.service=<service>` | 可选，默认使用 Compose service，再退回容器名。 |
+| `aih.logs.instance=<instance>` | 可选，默认容器名。 |
+| `aih.logs.environment=<environment>` | 可选，默认 `AIH_AGENT_DEFAULT_ENVIRONMENT`。 |
+| `aih.logs.regex=<regex>` | 可选，覆盖全局正则。 |
+| `aih.logs.regex-metadata-groups=<names>` | 可选，覆盖全局 metadata 分组。 |
+
+正则可使用这些内置分组：`time`、`level`、`traceId`、`spanId`、`message`。`time` 只解析 ISO-8601；`level` 只接受 `TRACE`、`DEBUG`、`INFO`、`WARN`、`ERROR`。没有配置正则或匹配失败时，整行作为 `message`，stdout 映射为 `INFO`，stderr 映射为 `ERROR`。
+
+### 使用 docker run
+
+先创建 API Key 引用文件：
+
+```properties
+payment=replace-with-payment-api-key
+order=replace-with-order-api-key
+```
+
+启动 Agent：
+
+```bash
+docker run -d --name aih-docker-agent \
+  --add-host=host.docker.internal:host-gateway \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v "$PWD/aih-agent-api-keys.properties:/run/secrets/aih-agent-api-keys.properties:ro" \
+  -e AIH_AGENT_ENDPOINT='http://host.docker.internal:25091/api/logs/batch' \
+  -e AIH_AGENT_DEFAULT_ENVIRONMENT='prod' \
+  -e AIH_AGENT_LOG_REGEX='^(?<time>\S+) (?<level>\w+) trace=(?<traceId>\S+) span=(?<spanId>\S+) (?<message>.*)$' \
+  ghcr.io/futureprayer/as-i-have-written-docker-agent:latest
+```
+
+启动需要采集的业务容器：
+
+```bash
+docker run -d --name payment-api \
+  --label aih.logs.enabled=true \
+  --label aih.logs.api-key-ref=payment \
+  --label aih.logs.service=payment \
+  --label aih.logs.instance=payment-api-1 \
+  --label aih.logs.environment=prod \
+  example/payment-api:latest
+```
+
+### 使用 Docker Compose
+
+```yaml
+services:
+  aih-agent:
+    image: ghcr.io/futureprayer/as-i-have-written-docker-agent:latest
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      AIH_AGENT_ENDPOINT: http://host.docker.internal:25091/api/logs/batch
+      AIH_AGENT_DEFAULT_ENVIRONMENT: prod
+      AIH_AGENT_LOG_REGEX: '^(?<time>\S+) (?<level>\w+) trace=(?<traceId>\S+) span=(?<spanId>\S+) (?<message>.*)$'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./aih-agent-api-keys.properties:/run/secrets/aih-agent-api-keys.properties:ro
+    labels:
+      aih.logs.agent: "true"
+    restart: unless-stopped
+
+  payment-api:
+    image: example/payment-api:latest
+    labels:
+      aih.logs.enabled: "true"
+      aih.logs.api-key-ref: payment
+      aih.logs.service: payment
+      aih.logs.instance: payment-api-1
+      aih.logs.environment: prod
+```
+
+Agent 会在 metadata 中写入 `containerId`、`containerName`、`image`、`stream`、`composeProject`、`composeService` 和安全筛选后的 Docker labels。启动后只跟随新日志，不补读历史日志，也不持久化 offset。Docker socket 权限很高，生产环境建议部署在受控主机，或通过 docker-socket-proxy 限制可访问的 Docker API。
+
 ## WebUI
 
 访问：
@@ -615,8 +732,8 @@ git push origin 1.0.0
 
 发布内容包括：
 
-- Docker 镜像：发布到 GHCR。
-- JAR 包：上传到同名 GitHub Release。
+- Docker 镜像：服务端和 Docker Log Agent 都会发布到 GHCR。
+- JAR 包：服务端和 Docker Log Agent 都会上传到同名 GitHub Release。
 
 如果需要同时推送到额外的 Docker 私库，可以在 GitHub 仓库的 Repository secrets 中配置：
 
@@ -632,6 +749,8 @@ git push origin 1.0.0
 ```text
 <EXTRA_REGISTRY>/<EXTRA_REGISTRY_NAMESPACE>/as-i-have-written:<version>
 <EXTRA_REGISTRY>/<EXTRA_REGISTRY_NAMESPACE>/as-i-have-written:latest
+<EXTRA_REGISTRY>/<EXTRA_REGISTRY_NAMESPACE>/as-i-have-written-docker-agent:<version>
+<EXTRA_REGISTRY>/<EXTRA_REGISTRY_NAMESPACE>/as-i-have-written-docker-agent:latest
 ```
 
 ## 安全

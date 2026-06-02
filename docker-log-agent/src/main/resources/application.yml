@@ -1,0 +1,20 @@
+spring:
+  application:
+    name: as-i-have-written-docker-log-agent
+  main:
+    web-application-type: none
+    banner-mode: off
+
+aih:
+  agent:
+    endpoint: ${AIH_AGENT_ENDPOINT:http://localhost:25091/api/logs/batch}
+    api-key-file: ${AIH_AGENT_API_KEY_FILE:/run/secrets/aih-agent-api-keys.properties}
+    api-keys: ${AIH_AGENT_API_KEYS:}
+    default-environment: ${AIH_AGENT_DEFAULT_ENVIRONMENT:local}
+    log-regex: ${AIH_AGENT_LOG_REGEX:}
+    log-regex-metadata-groups: ${AIH_AGENT_LOG_REGEX_METADATA_GROUPS:}
+    batch-size: ${AIH_AGENT_BATCH_SIZE:500}
+    queue-capacity: ${AIH_AGENT_QUEUE_CAPACITY:10000}
+    flush-interval: ${AIH_AGENT_FLUSH_INTERVAL:1s}
+    request-timeout: ${AIH_AGENT_REQUEST_TIMEOUT:5s}
+    docker-host: ${AIH_AGENT_DOCKER_HOST:}

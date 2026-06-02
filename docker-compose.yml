@@ -7,6 +7,7 @@ services:
       - "${AIH_HTTP_PORT:-25091}:25091"
     environment:
       SERVER_PORT: 25091
+      SERVER_HTTP2_ENABLED: ${SERVER_HTTP2_ENABLED:-false}
       MONGODB_URI: mongodb://mongodb:27017/as_i_have_written
       AIH_API_KEY_ENCRYPTION_KEY: ${AIH_API_KEY_ENCRYPTION_KEY:?Set AIH_API_KEY_ENCRYPTION_KEY}
       AIH_ADMIN_USERNAME: ${AIH_ADMIN_USERNAME:-admin}
