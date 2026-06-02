@@ -202,6 +202,354 @@ curl -i -X POST 'http://localhost:25091/api/logs/stream' \
 | `401 Unauthorized` | API Key 缺失、无效或已禁用。 |
 | `429 Too Many Requests` | 写入队列已满。 |
 
+## 其他 Spring Boot 项目接入
+
+如果业务项目使用 Spring Boot 默认的 SLF4J + Logback，可以添加一个自定义 Logback appender，把日志异步批量发送到本项目：
+
+```text
+POST http://<aih-host>:25091/api/logs/batch
+X-API-Key: <api-key>
+```
+
+请求体中的 `service`、`environment`、`level`、`message` 仍然必填。`service` 用于校验和分词兼容，最终持久化归属仍由 `X-API-Key` 对应的服务和实例绑定决定。
+
+默认 Spring Boot Web 项目已经包含 Logback 和 Jackson。非 Web 项目至少需要保留日志和 JSON 能力：
+
+```xml
+<dependency>
+  <groupId>org.springframework.boot</groupId>
+  <artifactId>spring-boot-starter</artifactId>
+</dependency>
+<dependency>
+  <groupId>org.springframework.boot</groupId>
+  <artifactId>spring-boot-starter-json</artifactId>
+</dependency>
+```
+
+将下面的类放到业务项目中，例如 `com.example.logging.AihLogbackAppender`。示例使用 Spring Boot 3.x 默认的 Jackson 2 包名；如果业务项目使用 Spring Boot 4 / Jackson 3，把 `ObjectMapper` 的 import 改为 `tools.jackson.databind.ObjectMapper`。
+
+```java
+package com.example.logging;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.classic.spi.IThrowableProxy;
+import ch.qos.logback.classic.spi.StackTraceElementProxy;
+import ch.qos.logback.core.UnsynchronizedAppenderBase;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+public class AihLogbackAppender extends UnsynchronizedAppenderBase<ILoggingEvent> {
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final AtomicBoolean running = new AtomicBoolean(false);
+
+    private BlockingQueue<Map<String, Object>> queue;
+    private HttpClient httpClient;
+    private Thread worker;
+
+    private String endpoint;
+    private String apiKey;
+    private String service = "application";
+    private String environment = "local";
+    private int batchSize = 100;
+    private int queueCapacity = 10000;
+    private long flushIntervalMillis = 1000;
+    private long requestTimeoutMillis = 5000;
+    private long connectTimeoutMillis = 3000;
+
+    @Override
+    public void start() {
+        if (isBlank(endpoint)) {
+            addError("endpoint is required");
+            return;
+        }
+        if (isBlank(apiKey)) {
+            addError("apiKey is required");
+            return;
+        }
+        if (isBlank(service)) {
+            addError("service is required");
+            return;
+        }
+        if (isBlank(environment)) {
+            addError("environment is required");
+            return;
+        }
+
+        batchSize = Math.max(1, batchSize);
+        queueCapacity = Math.max(batchSize, queueCapacity);
+        flushIntervalMillis = Math.max(100, flushIntervalMillis);
+        requestTimeoutMillis = Math.max(1000, requestTimeoutMillis);
+        connectTimeoutMillis = Math.max(1000, connectTimeoutMillis);
+
+        queue = new ArrayBlockingQueue<>(queueCapacity);
+        httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofMillis(connectTimeoutMillis))
+                .build();
+
+        running.set(true);
+        worker = new Thread(this::writeLoop, "aih-logback-appender");
+        worker.setDaemon(true);
+        worker.start();
+
+        super.start();
+    }
+
+    @Override
+    protected void append(ILoggingEvent event) {
+        Map<String, Object> payload = toPayload(event);
+        if (!queue.offer(payload)) {
+            addWarn("As I Have Written log queue is full; dropping log event.");
+        }
+    }
+
+    @Override
+    public void stop() {
+        if (!isStarted()) {
+            return;
+        }
+        super.stop();
+        running.set(false);
+        if (worker != null) {
+            worker.interrupt();
+            try {
+                worker.join(2000);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        flushRemaining();
+    }
+
+    private void writeLoop() {
+        List<Map<String, Object>> batch = new ArrayList<>(batchSize);
+        long flushAtNanos = 0L;
+
+        while (running.get()) {
+            try {
+                if (batch.isEmpty()) {
+                    Map<String, Object> first = queue.poll(flushIntervalMillis, TimeUnit.MILLISECONDS);
+                    if (first == null) {
+                        continue;
+                    }
+                    batch.add(first);
+                    flushAtNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(flushIntervalMillis);
+                }
+
+                queue.drainTo(batch, Math.max(0, batchSize - batch.size()));
+                long waitNanos = flushAtNanos - System.nanoTime();
+                if (batch.size() < batchSize && waitNanos > 0) {
+                    Map<String, Object> next = queue.poll(waitNanos, TimeUnit.NANOSECONDS);
+                    if (next != null) {
+                        batch.add(next);
+                        queue.drainTo(batch, Math.max(0, batchSize - batch.size()));
+                    }
+                }
+
+                if (batch.size() >= batchSize || System.nanoTime() >= flushAtNanos) {
+                    sendBatch(batch);
+                    batch.clear();
+                    flushAtNanos = 0L;
+                }
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                return;
+            } catch (RuntimeException ex) {
+                addWarn("Failed to process As I Have Written log batch.", ex);
+                batch.clear();
+                flushAtNanos = 0L;
+            }
+        }
+    }
+
+    private void flushRemaining() {
+        if (queue == null || queue.isEmpty()) {
+            return;
+        }
+        List<Map<String, Object>> batch = new ArrayList<>(batchSize);
+        queue.drainTo(batch);
+        sendBatch(batch);
+    }
+
+    private void sendBatch(List<Map<String, Object>> batch) {
+        if (batch.isEmpty()) {
+            return;
+        }
+        try {
+            String body = objectMapper.writeValueAsString(batch);
+            HttpRequest request = HttpRequest.newBuilder(URI.create(endpoint))
+                    .timeout(Duration.ofMillis(requestTimeoutMillis))
+                    .header("Content-Type", "application/json")
+                    .header("X-API-Key", apiKey)
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                addWarn("As I Have Written returned HTTP " + response.statusCode() + ": " + trim(response.body()));
+            }
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        } catch (Exception ex) {
+            addWarn("Failed to send logs to As I Have Written.", ex);
+        }
+    }
+
+    private Map<String, Object> toPayload(ILoggingEvent event) {
+        Map<String, String> mdc = event.getMDCPropertyMap();
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("eventTime", Instant.ofEpochMilli(event.getTimeStamp()).toString());
+        payload.put("service", service);
+        payload.put("environment", environment);
+        payload.put("level", event.getLevel().toString());
+        payload.put("traceId", blankToNull(mdc == null ? null : mdc.get("traceId")));
+        payload.put("spanId", blankToNull(mdc == null ? null : mdc.get("spanId")));
+        payload.put("message", messageWithThrowable(event));
+
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("loggerName", event.getLoggerName());
+        metadata.put("threadName", event.getThreadName());
+        if (mdc != null && !mdc.isEmpty()) {
+            metadata.put("mdc", new LinkedHashMap<>(mdc));
+        }
+        if (event.getThrowableProxy() != null) {
+            metadata.put("exceptionClass", event.getThrowableProxy().getClassName());
+        }
+        payload.put("metadata", metadata);
+        return payload;
+    }
+
+    private String messageWithThrowable(ILoggingEvent event) {
+        StringBuilder message = new StringBuilder(String.valueOf(event.getFormattedMessage()));
+        appendThrowable(message, event.getThrowableProxy(), "");
+        return message.toString();
+    }
+
+    private void appendThrowable(StringBuilder message, IThrowableProxy throwable, String prefix) {
+        if (throwable == null) {
+            return;
+        }
+        message.append(System.lineSeparator())
+                .append(prefix)
+                .append(throwable.getClassName());
+        if (throwable.getMessage() != null) {
+            message.append(": ").append(throwable.getMessage());
+        }
+        for (StackTraceElementProxy element : throwable.getStackTraceElementProxyArray()) {
+            message.append(System.lineSeparator()).append("    at ").append(element.getSTEAsString());
+        }
+        appendThrowable(message, throwable.getCause(), "Caused by: ");
+    }
+
+    private String blankToNull(String value) {
+        return isBlank(value) ? null : value.trim();
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private String trim(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.length() <= 512 ? value : value.substring(0, 512) + "...";
+    }
+
+    public void setEndpoint(String endpoint) {
+        this.endpoint = endpoint;
+    }
+
+    public void setApiKey(String apiKey) {
+        this.apiKey = apiKey;
+    }
+
+    public void setService(String service) {
+        this.service = service;
+    }
+
+    public void setEnvironment(String environment) {
+        this.environment = environment;
+    }
+
+    public void setBatchSize(int batchSize) {
+        this.batchSize = batchSize;
+    }
+
+    public void setQueueCapacity(int queueCapacity) {
+        this.queueCapacity = queueCapacity;
+    }
+
+    public void setFlushIntervalMillis(long flushIntervalMillis) {
+        this.flushIntervalMillis = flushIntervalMillis;
+    }
+
+    public void setRequestTimeoutMillis(long requestTimeoutMillis) {
+        this.requestTimeoutMillis = requestTimeoutMillis;
+    }
+
+    public void setConnectTimeoutMillis(long connectTimeoutMillis) {
+        this.connectTimeoutMillis = connectTimeoutMillis;
+    }
+}
+```
+
+在业务项目的 `src/main/resources/logback-spring.xml` 中配置 appender：
+
+```xml
+<configuration>
+  <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+  <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+  <springProperty scope="context" name="aihLogEndpoint" source="AIH_LOG_ENDPOINT"
+                  defaultValue="http://localhost:25091/api/logs/batch"/>
+  <springProperty scope="context" name="aihLogApiKey" source="AIH_LOG_API_KEY"/>
+  <springProperty scope="context" name="applicationName" source="spring.application.name"
+                  defaultValue="client-service"/>
+  <springProperty scope="context" name="environment" source="spring.profiles.active"
+                  defaultValue="local"/>
+
+  <appender name="AIH" class="com.example.logging.AihLogbackAppender">
+    <endpoint>${aihLogEndpoint}</endpoint>
+    <apiKey>${aihLogApiKey}</apiKey>
+    <service>${applicationName}</service>
+    <environment>${environment}</environment>
+    <batchSize>100</batchSize>
+    <queueCapacity>10000</queueCapacity>
+    <flushIntervalMillis>1000</flushIntervalMillis>
+  </appender>
+
+  <root level="INFO">
+    <appender-ref ref="CONSOLE"/>
+    <appender-ref ref="AIH"/>
+  </root>
+</configuration>
+```
+
+启动业务项目前设置：
+
+```bash
+export AIH_LOG_ENDPOINT='http://localhost:25091/api/logs/batch'
+export AIH_LOG_API_KEY='<api-key>'
+export SPRING_APPLICATION_NAME='payment-service'
+export SPRING_PROFILES_ACTIVE='prod'
+```
+
+示例 appender 不做持久化重试：远端不可用、HTTP 非 2xx 或队列已满时会丢弃日志并保留本地控制台输出。需要强可靠投递时，建议使用 MQ 或业务侧本地缓冲方案。
+
 ## WebUI
 
 访问：
