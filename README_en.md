@@ -1,10 +1,22 @@
-# As I Have Written
+<p align="center">
+  <img src="logo.png" alt="Peony" width="128" height="128">
+</p>
 
-<img src="logo.png" alt="As I Have Written logo" width="120">
+<h1 align="center">As I Have Written</h1>
 
-[中文](README.md) | [GitHub](https://github.com/FuturePrayer/As-I-Have-Written)
+<p align="center">
+<strong>As I Have Written is a lightweight Spring Boot 4 log ingestion and query console backed by MongoDB. It accepts logs through HTTP, batch HTTP, NDJSON streamable HTTP, and a pluggable MQ receiver. It tokenizes logs in the application, stores them in MongoDB, and provides a WebUI for service-scoped querying, API key management, custom metadata filters, and Chinese/English switching.</strong>
+</p>
 
-As I Have Written is a lightweight Spring Boot 4 log ingestion and query console backed by MongoDB. It accepts logs through HTTP, batch HTTP, NDJSON streamable HTTP, and a pluggable MQ receiver. It tokenizes logs in the application, stores them in MongoDB, and provides a WebUI for service-scoped querying, API key management, custom metadata filters, and Chinese/English switching.
+---
+
+[简体中文](README.md) | English
+
+[![Release](https://img.shields.io/github/v/release/FuturePrayer/As-I-Have-Written?sort=semver)](https://github.com/FuturePrayer/As-I-Have-Written/releases)
+[![Java 21](https://img.shields.io/badge/java-21-orange.svg)](https://openjdk.org/)
+[![Spring Boot 4](https://img.shields.io/badge/Spring%20Boot-4.0-6DB33F?logo=springboot&logoColor=white)](https://spring.io/projects/spring-boot)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE.txt)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/FuturePrayer/As-I-Have-Written)
 
 ## Features
 
@@ -88,6 +100,12 @@ The release workflow publishes images to GitHub Container Registry:
 ```text
 ghcr.io/futureprayer/as-i-have-written:<version>
 ghcr.io/futureprayer/as-i-have-written:latest
+```
+
+Users in mainland China can also use the accelerated mirror:
+
+```text
+swr.cn-east-3.myhuaweicloud.com/suhoan/as-i-have-written:latest
 ```
 
 You can also build an image locally:
