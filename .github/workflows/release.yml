@@ -1,0 +1,183 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  validate:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    outputs:
+      project_version: ${{ steps.project.outputs.project_version }}
+      artifact_id: ${{ steps.project.outputs.artifact_id }}
+      should_release: ${{ steps.project.outputs.should_release }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Read project version
+        id: project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PROJECT_VERSION="$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)"
+          ARTIFACT_ID="$(mvn -q -DforceStdout help:evaluate -Dexpression=project.artifactId)"
+          TAG_NAME="${GITHUB_REF_NAME}"
+          SHOULD_RELEASE=false
+
+          if [[ "${PROJECT_VERSION}" =~ ^[0-9]+(\.[0-9]+)*$ && "${TAG_NAME}" == "${PROJECT_VERSION}" ]]; then
+            SHOULD_RELEASE=true
+          fi
+
+          {
+            echo "project_version=${PROJECT_VERSION}"
+            echo "artifact_id=${ARTIFACT_ID}"
+            echo "should_release=${SHOULD_RELEASE}"
+          } >> "${GITHUB_OUTPUT}"
+
+          {
+            echo "### Release validation"
+            echo "- POM version: \`${PROJECT_VERSION}\`"
+            echo "- Tag: \`${TAG_NAME}\`"
+            echo "- Release enabled: \`${SHOULD_RELEASE}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  build-and-release:
+    name: Build image and publish release
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.should_release == 'true'
+    env:
+      PROJECT_VERSION: ${{ needs.validate.outputs.project_version }}
+      ARTIFACT_ID: ${{ needs.validate.outputs.artifact_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build JAR
+        env:
+          AIH_API_KEY_ENCRYPTION_KEY: release-workflow-test-encryption-key
+        run: mvn -B clean package
+
+      - name: Prepare release artifact
+        id: artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          JAR_PATH="target/${ARTIFACT_ID}-${PROJECT_VERSION}.jar"
+          if [[ ! -f "${JAR_PATH}" ]]; then
+            echo "Expected JAR not found: ${JAR_PATH}" >&2
+            exit 1
+          fi
+
+          mkdir -p dist
+          RELEASE_JAR="dist/${ARTIFACT_ID}-${PROJECT_VERSION}.jar"
+          cp "${JAR_PATH}" "${RELEASE_JAR}"
+          echo "jar_path=${RELEASE_JAR}" >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare image tags
+        id: image
+        shell: bash
+        env:
+          EXTRA_REGISTRY: ${{ secrets.EXTRA_REGISTRY }}
+          EXTRA_REGISTRY_NAMESPACE: ${{ secrets.EXTRA_REGISTRY_NAMESPACE }}
+          EXTRA_REGISTRY_USERNAME: ${{ secrets.EXTRA_REGISTRY_USERNAME }}
+          EXTRA_REGISTRY_PASSWORD: ${{ secrets.EXTRA_REGISTRY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          REPOSITORY="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          REPOSITORY_NAME="${REPOSITORY##*/}"
+          GHCR_IMAGE="ghcr.io/${REPOSITORY}"
+          IMAGE_TAGS="${GHCR_IMAGE}:${PROJECT_VERSION}"$'\n'"${GHCR_IMAGE}:latest"
+          EXTRA_ENABLED=false
+          EXTRA_REGISTRY_CLEAN=""
+
+          if [[ -n "${EXTRA_REGISTRY}" || -n "${EXTRA_REGISTRY_NAMESPACE}" || -n "${EXTRA_REGISTRY_USERNAME}" || -n "${EXTRA_REGISTRY_PASSWORD}" ]]; then
+            if [[ -z "${EXTRA_REGISTRY}" || -z "${EXTRA_REGISTRY_NAMESPACE}" || -z "${EXTRA_REGISTRY_USERNAME}" || -z "${EXTRA_REGISTRY_PASSWORD}" ]]; then
+              echo "::error::Configure all extra registry secrets: EXTRA_REGISTRY, EXTRA_REGISTRY_NAMESPACE, EXTRA_REGISTRY_USERNAME, EXTRA_REGISTRY_PASSWORD."
+              exit 1
+            fi
+
+            EXTRA_ENABLED=true
+            EXTRA_REGISTRY_CLEAN="$(echo "${EXTRA_REGISTRY}" | sed -E 's#^https?://##; s#/+$##' | tr '[:upper:]' '[:lower:]')"
+            EXTRA_NAMESPACE_CLEAN="$(echo "${EXTRA_REGISTRY_NAMESPACE}" | sed -E 's#^/+##; s#/+$##' | tr '[:upper:]' '[:lower:]')"
+            EXTRA_IMAGE="${EXTRA_REGISTRY_CLEAN}/${EXTRA_NAMESPACE_CLEAN}/${REPOSITORY_NAME}"
+            IMAGE_TAGS="${IMAGE_TAGS}"$'\n'"${EXTRA_IMAGE}:${PROJECT_VERSION}"$'\n'"${EXTRA_IMAGE}:latest"
+          fi
+
+          {
+            echo "extra_enabled=${EXTRA_ENABLED}"
+            echo "extra_registry=${EXTRA_REGISTRY_CLEAN}"
+            echo "tags<<EOF"
+            echo "${IMAGE_TAGS}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to extra registry
+        if: ${{ steps.image.outputs.extra_enabled == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ steps.image.outputs.extra_registry }}
+          username: ${{ secrets.EXTRA_REGISTRY_USERNAME }}
+          password: ${{ secrets.EXTRA_REGISTRY_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.image.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ env.PROJECT_VERSION }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JAR_PATH: ${{ steps.artifact.outputs.jar_path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "${PROJECT_VERSION}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${PROJECT_VERSION}" "${JAR_PATH}" --repo "${GITHUB_REPOSITORY}" --clobber
+          else
+            gh release create "${PROJECT_VERSION}" "${JAR_PATH}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "As I Have Written ${PROJECT_VERSION}" \
+              --generate-notes
+          fi

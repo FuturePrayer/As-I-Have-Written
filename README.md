@@ -1,73 +1,102 @@
-﻿# 中文说明
+# As I Have Written
 
-<img src="logo.png" alt="如我所书 logo" width="120">
+<img src="logo.png" alt="As I Have Written logo" width="120">
 
-English README: [README_en.md](README_en.md)
+[English](README_en.md) | [GitHub](https://github.com/FuturePrayer/As-I-Have-Written)
 
-仓库地址：[FuturePrayer/As-I-Have-Written](https://github.com/FuturePrayer/As-I-Have-Written)
+As I Have Written 是一个基于 Spring Boot 4 和 MongoDB 的轻量级日志接收与查询控制台。它支持通过 HTTP、批量 HTTP、NDJSON Streamable HTTP 以及可扩展 MQ 接收器写入日志，在应用侧完成分词，并提供 WebUI 用于按服务查询日志、管理 API Key、筛选自定义 metadata，以及切换中文和英文界面。
 
-> 一个基于 Spring Boot 4 和 MongoDB 的轻量级日志接收与查询控制台。
+## 特性
 
-As I Have Written 支持通过 HTTP、批量 HTTP、NDJSON Streamable HTTP 以及可扩展 MQ 接收器接收应用日志。系统使用 MongoDB 存储日志，在应用侧完成分词，并提供 WebUI 用于按服务查询日志、管理 API Key、筛选自定义维度以及切换中英文界面。
-
-## 功能特性
-
-- 基于 Spring Boot 4，默认启用虚拟线程。
-- 使用 MongoDB 存储日志。
-- 分词在应用中完成，MongoDB 只保存生成后的 `tokens` 并执行普通索引匹配。
-- 支持单条 HTTP 写入、批量 HTTP 写入、NDJSON Streamable HTTP 写入。
+- Spring Boot 4，默认启用虚拟线程。
+- MongoDB 持久化，分词在应用侧完成。
+- 支持单条 HTTP、批量 HTTP、NDJSON Streamable HTTP 写入。
 - 提供可扩展 MQ 接收接口和 JSON 测试接收实现。
-- WebUI 使用 Sa-Token 做登录态控制，不依赖 Spring Security。
-- API Key 绑定到 `Service + Instance`。
-- API Key 用 hash 做认证，用 AES-GCM 加密保存以支持 WebUI 重复查看。
-- 日志归属以 API Key 绑定关系为准，不信任请求体中的 `service`。
-- WebUI 中一旦存在 Service，查询时 Service 必选。
-- 日志页默认查询最近 15 分钟。
-- 自动发现日志 `metadata` 中的自定义维度，并支持精确筛选。
-- 默认中文界面，支持中英文切换。
-- 默认端口为 `25091`，可通过 `SERVER_PORT` 修改。
+- WebUI 使用 Sa-Token 管理登录态，不依赖 Spring Security。
+- API Key 绑定到 `Service + Instance`，日志归属以 API Key 绑定关系为准。
+- API Key 使用 hash 做认证，并通过 AES-GCM 加密保存以支持 WebUI 重复查看。
+- WebUI 支持服务选择、日志筛选、API Key 管理、自定义 metadata 精确筛选和中英文切换。
+- 默认查询最近 15 分钟日志；一旦存在 Service，WebUI 查询必须选择 Service。
 
 ## 技术栈
 
-- Java：Maven 编译目标为 Java 21；已使用 JDK 26 测试。
-- 框架：Spring Boot 4.0.x。
-- Web：Spring Web MVC、Thymeleaf。
-- 认证：`sa-token-spring-boot4-starter`。
-- 数据库：MongoDB。
-- 构建：Maven。
-
-## 环境要求
-
-- JDK 21 或更高版本。本项目已使用 `D:\develop\jdk-26` 测试。
-- Maven 3.9.x 或更高版本。本项目已使用 `D:\develop\apache-maven-3.9.6` 测试。
-- MongoDB 6+ 或兼容版本。
+- Java 21+
+- Spring Boot 4
+- Spring Web MVC
+- Thymeleaf
+- Sa-Token
+- MongoDB
+- Maven
 
 ## 快速开始
 
-设置必要环境变量并启动：
+### Docker Compose（包含 MongoDB）
 
-```powershell
-$env:JAVA_HOME='D:\develop\jdk-26'
-$env:PATH='D:\develop\jdk-26\bin;D:\develop\apache-maven-3.9.6\bin;' + $env:PATH
+适合本地试用。Compose 会从当前源码构建应用镜像；MongoDB 只在 Compose 网络内暴露，数据保存在 Docker volume 中。
 
-$env:MONGODB_URI='mongodb://localhost:27017/as_i_have_written'
-$env:AIH_API_KEY_ENCRYPTION_KEY='replace-with-a-long-random-secret'
-$env:AIH_ADMIN_USERNAME='admin'
-$env:AIH_ADMIN_PASSWORD='replace-this-password'
-$env:AIH_DEFAULT_API_KEY='replace-this-default-ingest-key'
-
-mvn spring-boot:run
+```bash
+AIH_API_KEY_ENCRYPTION_KEY='replace-with-a-long-random-secret' \
+AIH_ADMIN_PASSWORD='replace-this-password' \
+AIH_DEFAULT_API_KEY='replace-this-default-ingest-key' \
+docker compose up -d
 ```
 
-访问：
+访问 WebUI：
 
 ```text
 http://localhost:25091/ui/logs
 ```
 
-登录用户名和密码由 `AIH_ADMIN_USERNAME`、`AIH_ADMIN_PASSWORD` 控制。如果未配置，默认是 `admin / admin123`；该默认值只适合本地开发。
+### Docker Compose（外部 MongoDB）
 
-## 配置说明
+当你已经有 MongoDB 实例时，使用不包含 MongoDB 的 Compose 文件。Compose 会从当前源码构建应用镜像：
+
+```bash
+MONGODB_URI='mongodb://user:password@mongo-host:27017/as_i_have_written?authSource=admin' \
+AIH_API_KEY_ENCRYPTION_KEY='replace-with-a-long-random-secret' \
+AIH_ADMIN_PASSWORD='replace-this-password' \
+AIH_DEFAULT_API_KEY='replace-this-default-ingest-key' \
+docker compose -f docker-compose.external-mongodb.yml up -d
+```
+
+### 从源码运行
+
+环境要求：
+
+- JDK 21 或更高版本。
+- Maven 3.9 或更高版本。
+- MongoDB 6 或兼容版本。
+
+启动：
+
+```bash
+export MONGODB_URI='mongodb://localhost:27017/as_i_have_written'
+export AIH_API_KEY_ENCRYPTION_KEY='replace-with-a-long-random-secret'
+export AIH_ADMIN_USERNAME='admin'
+export AIH_ADMIN_PASSWORD='replace-this-password'
+export AIH_DEFAULT_API_KEY='replace-this-default-ingest-key'
+
+mvn spring-boot:run
+```
+
+默认登录账号由 `AIH_ADMIN_USERNAME` 和 `AIH_ADMIN_PASSWORD` 控制。如果未配置，开发默认值为 `admin / admin123`；共享环境和生产环境必须修改。
+
+## Docker 镜像
+
+Release 工作流会将镜像发布到 GitHub Container Registry：
+
+```text
+ghcr.io/futureprayer/as-i-have-written:<version>
+ghcr.io/futureprayer/as-i-have-written:latest
+```
+
+本地也可以直接构建镜像：
+
+```bash
+docker build -t as-i-have-written:local .
+```
+
+## 配置
 
 应用读取 `src/main/resources/application.yml` 和环境变量。
 
@@ -85,129 +114,18 @@ http://localhost:25091/ui/logs
 | `AIH_DEFAULT_SERVICE_DISPLAY_NAME` | `Default` | 默认服务显示名。 |
 | `AIH_DEFAULT_INSTANCE_NAME` | `default` | 启动时创建的默认实例名。 |
 | `AIH_DEFAULT_API_KEY` | `dev-api-key` | 启动时创建的默认 API Key。非本地环境必须修改。 |
-| `AIH_SERVICE_CLEANUP_FIXED_DELAY` | `10m` | 自动删除“没有 API Key 且没有日志”的 Service 的周期。 |
+| `AIH_SERVICE_CLEANUP_FIXED_DELAY` | `10m` | 自动删除空 Service 的周期。 |
 | `AIH_SERVICE_CLEANUP_INITIAL_DELAY` | `10m` | 首次执行空 Service 清理前的等待时间。 |
 
-### MongoDB 说明
-
-应用会使用以下集合：
+MongoDB 集合：
 
 - `log_entries`：日志数据。
 - `log_services`：WebUI 服务下拉选项。
 - `log_sources`：`serviceName + instanceName` 对应的 API Key 绑定。
 
-由于启用了 `spring.data.mongodb.auto-index-creation=true`，MongoDB 索引会由 Spring Data MongoDB 自动创建。
+Spring Data MongoDB 会自动创建索引。MongoDB 只保存应用生成后的 `tokens` 并执行普通索引匹配，不负责全文分词。
 
-分词逻辑始终在应用侧执行。MongoDB 不承担全文分词职责。
-
-## 部署方式
-
-### 方式一：使用 Maven 运行
-
-适合本地开发或测试环境：
-
-```powershell
-$env:JAVA_HOME='D:\develop\jdk-26'
-$env:PATH='D:\develop\jdk-26\bin;D:\develop\apache-maven-3.9.6\bin;' + $env:PATH
-$env:MONGODB_URI='mongodb://user:password@mongo-host:27017/as_i_have_written?authSource=admin'
-$env:AIH_API_KEY_ENCRYPTION_KEY='replace-with-a-long-random-secret'
-$env:AIH_ADMIN_USERNAME='admin'
-$env:AIH_ADMIN_PASSWORD='replace-this-password'
-$env:AIH_DEFAULT_API_KEY='replace-this-default-ingest-key'
-mvn spring-boot:run
-```
-
-### 方式二：构建 JAR 后运行
-
-构建：
-
-```powershell
-mvn clean package
-```
-
-运行：
-
-```powershell
-java -jar target\As-I-Have-Written-0.0.1-SNAPSHOT.jar
-```
-
-请确保 Java 进程能读取前文列出的环境变量。
-
-### 方式三：Windows 服务或长期进程
-
-用于长期运行时：
-
-1. 使用 `mvn clean package` 构建 JAR。
-2. 创建独立应用目录并复制 JAR。
-3. 在服务级别配置环境变量，不要把密钥写进源码文件。
-4. 使用 `java -jar` 启动。
-5. 确保启动前 MongoDB 可连接。
-6. 默认访问 `http://<host>:25091`，也可通过 `SERVER_PORT` 修改端口。
-
-### 反向代理建议
-
-应用可以放在反向代理后：
-
-- 在反向代理层终止 TLS。
-- 尽可能限制 `/ui/**` 只能由可信网络访问。
-- `/api/logs/**` 建议只允许可信服务或 API 网关访问。
-- 不要把 MongoDB 暴露到公网。
-
-## WebUI 使用
-
-访问：
-
-```text
-http://localhost:25091/ui/logs
-```
-
-未登录访问 `/ui/**` 时会跳转到：
-
-```text
-/ui/login?redirect=<原访问地址>
-```
-
-登录成功后，如果 redirect 是安全的站内相对路径，会回到原访问地址。
-
-### 日志页
-
-- 默认查询最近 15 分钟。
-- 一旦系统存在 Service，查询时 Service 必选。
-- 未传 Service 时自动选择按创建顺序排序的第一个 Service。
-- 支持以下筛选：
-  - 服务
-  - 实例
-  - 环境
-  - 日志级别
-  - Trace ID
-  - Source ID
-  - 应用生成的 tokens
-  - 自动发现的 metadata 维度
-
-### API Key 管理页
-
-访问：
-
-```text
-/ui/api-keys
-```
-
-可执行：
-
-- 创建服务和实例对应的 API Key。
-- 从 datalist 复用已有 Service 名称。
-- 启用或禁用 API Key。
-- 删除 API Key，但不会删除 Service 或日志。
-- 查看解密后的 API Key。
-
-禁用 API Key 后，所有日志接收接口都会返回 HTTP `401`。
-删除 API Key 后，该 key 会永久移除；对应 Service 会保留，因此可以继续为该 Service 重新生成 API Key。只有当某个 Service 同时没有 API Key 且没有日志时，后台才会自动删除它；手动清理日志后也会立即执行一次空 Service 清理。
-
-### 语言切换
-
-WebUI 默认中文。顶部导航的语言按钮可在中文和英文之间切换，并保留当前路径和查询参数。
-
-## 日志写入 API
+## 写入 API
 
 所有写入接口都需要：
 
@@ -217,77 +135,32 @@ X-API-Key: <api-key>
 
 `X-Log-Source` 已废弃，当前实现会忽略它。
 
-重要归属规则：
+请求体中的 `service` 字段仅用于校验和分词兼容；实际持久化的 `service` 和 `instanceName` 始终来自 API Key 绑定关系，客户端无法通过修改请求体伪造日志归属。
 
-- 请求体中仍保留 `service` 字段，用于校验和分词兼容。
-- 实际持久化的 `service` 和 `instanceName` 始终来自 API Key 绑定关系。
-- 客户端无法通过修改请求体中的 `service` 伪造日志归属。
+### 单条日志
 
-### 日志请求体
-
-```json
-{
-  "eventTime": "2026-06-02T01:00:00Z",
-  "service": "ignored-for-ownership",
-  "environment": "prod",
-  "level": "ERROR",
-  "traceId": "trace-123",
-  "spanId": "span-456",
-  "message": "payment failed",
-  "metadata": {
-    "threadName": "worker-1",
-    "region": "ap-east-1"
-  }
-}
-```
-
-必填字段：
-
-- `service`
-- `environment`
-- `level`
-- `message`
-
-支持的日志级别：
-
-- `TRACE`
-- `DEBUG`
-- `INFO`
-- `WARN`
-- `ERROR`
-
-### 单条写入
-
-```powershell
-Invoke-RestMethod `
-  -Method Post `
-  -Uri 'http://localhost:25091/api/logs' `
-  -Headers @{ 'X-API-Key' = '<api-key>' } `
-  -ContentType 'application/json' `
-  -Body '{
-    "service":"client-value",
-    "environment":"prod",
-    "level":"INFO",
-    "message":"single log",
-    "metadata":{"threadName":"main"}
+```bash
+curl -i -X POST 'http://localhost:25091/api/logs' \
+  -H 'X-API-Key: <api-key>' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "service": "client-value",
+    "environment": "prod",
+    "level": "INFO",
+    "message": "single log",
+    "metadata": {
+      "threadName": "main"
+    }
   }'
 ```
 
-响应示例：
+### 批量日志
 
-```json
-{"accepted":1}
-```
-
-### 批量写入
-
-```powershell
-Invoke-RestMethod `
-  -Method Post `
-  -Uri 'http://localhost:25091/api/logs/batch' `
-  -Headers @{ 'X-API-Key' = '<api-key>' } `
-  -ContentType 'application/json' `
-  -Body '[
+```bash
+curl -i -X POST 'http://localhost:25091/api/logs/batch' \
+  -H 'X-API-Key: <api-key>' \
+  -H 'Content-Type: application/json' \
+  -d '[
     {"service":"client-value","environment":"prod","level":"INFO","message":"one"},
     {"service":"client-value","environment":"prod","level":"WARN","message":"two"}
   ]'
@@ -295,21 +168,14 @@ Invoke-RestMethod `
 
 ### NDJSON Streamable HTTP
 
-```powershell
-$body = @'
-{"service":"client-value","environment":"prod","level":"INFO","message":"one"}
-{"service":"client-value","environment":"prod","level":"WARN","message":"two"}
-'@
-
-Invoke-RestMethod `
-  -Method Post `
-  -Uri 'http://localhost:25091/api/logs/stream' `
-  -Headers @{ 'X-API-Key' = '<api-key>' } `
-  -ContentType 'application/x-ndjson' `
-  -Body $body
+```bash
+curl -i -X POST 'http://localhost:25091/api/logs/stream' \
+  -H 'X-API-Key: <api-key>' \
+  -H 'Content-Type: application/x-ndjson' \
+  --data-binary $'{"service":"client-value","environment":"prod","level":"INFO","message":"one"}\n{"service":"client-value","environment":"prod","level":"WARN","message":"two"}\n'
 ```
 
-### 响应状态
+响应状态：
 
 | 状态码 | 含义 |
 | --- | --- |
@@ -318,94 +184,97 @@ Invoke-RestMethod `
 | `401 Unauthorized` | API Key 缺失、无效或已禁用。 |
 | `429 Too Many Requests` | 写入队列已满。 |
 
+## WebUI
+
+访问：
+
+```text
+http://localhost:25091/ui/logs
+```
+
+主要页面：
+
+- `/ui/logs`：查询日志，支持服务、实例、环境、级别、Trace ID、Source ID、tokens 和 metadata 过滤。
+- `/ui/api-keys`：创建、启用、禁用、删除和查看 API Key。
+- `/ui/cleanup`：执行手动日志清理。
+
+删除 API Key 不会删除对应 Service 或日志。只有当某个 Service 同时没有 API Key 且没有日志时，后台清理或手动清理后的空 Service 清理才会删除它。
+
 ## MQ 集成
 
-项目中包含：
+项目提供：
 
 - `MqLogReceiver`：接收器接口。
 - `MqLogMessageDecoder`：解码器接口。
 - `JsonMqLogMessageDecoder`：JSON 消息解码器。
 - `TestMqLogReceiver`：测试接收器，使用第一个启用的 API Key 绑定源。
 
-真实 MQ 集成时，实现自己的 broker 接收器，然后调用：
+真实 MQ 集成时，实现自己的 broker 接收器，并使用已认证或已解析的 `LogSource` 调用日志写入服务。不要信任 MQ 消息体中的服务归属。
 
-```java
-ingestService.accept(new LogIngestCommand(source, IngestChannel.MQ_TEST, request));
-```
+## 开发
 
-请使用已认证或已解析的 `LogSource`，不要信任 MQ 消息体中的服务归属。
+运行普通测试：
 
-## 测试
-
-不连接 MongoDB 时运行普通测试：
-
-```powershell
+```bash
 mvn test
 ```
 
-设置 `AIH_TEST_MONGODB_URI` 后会启用 MongoDB 集成测试：
+启用 MongoDB 集成测试：
 
-```powershell
-$env:AIH_TEST_MONGODB_URI='mongodb://user:password@mongo-host:27017/aih_test?authSource=admin'
+```bash
+export AIH_TEST_MONGODB_URI='mongodb://user:password@mongo-host:27017/aih_test?authSource=admin'
 mvn test
 ```
 
-测试辅助类会自动注入 `aih.security.api-key-encryption-key`。
+构建 JAR：
 
-## 安全注意事项
+```bash
+mvn clean package
+```
+
+## 发布
+
+GitHub Actions release 工作流只会在满足以下条件时发布：
+
+1. `pom.xml` 中的版本号是正式版本号，例如 `1.0.0`。
+2. 版本号不包含 `SNAPSHOT`、`alpha`、`beta`、`rc` 等后缀。
+3. 推送到远端的 tag 名称与 `pom.xml` 版本号完全一致。
+
+示例：
+
+```bash
+git tag 1.0.0
+git push origin 1.0.0
+```
+
+发布内容包括：
+
+- Docker 镜像：发布到 GHCR。
+- JAR 包：上传到同名 GitHub Release。
+
+如果需要同时推送到额外的 Docker 私库，可以在 GitHub 仓库的 Repository secrets 中配置：
+
+| Secret | 说明 |
+| --- | --- |
+| `EXTRA_REGISTRY` | 私库地址，例如 `registry.example.com`。 |
+| `EXTRA_REGISTRY_NAMESPACE` | 私库命名空间，例如 `team` 或 `team/apps`。 |
+| `EXTRA_REGISTRY_USERNAME` | 私库用户名。 |
+| `EXTRA_REGISTRY_PASSWORD` | 私库密码或访问令牌。 |
+
+四个 secret 必须同时配置才会启用额外推送。额外镜像地址格式为：
+
+```text
+<EXTRA_REGISTRY>/<EXTRA_REGISTRY_NAMESPACE>/as-i-have-written:<version>
+<EXTRA_REGISTRY>/<EXTRA_REGISTRY_NAMESPACE>/as-i-have-written:latest
+```
+
+## 安全
 
 - 必须配置 `AIH_API_KEY_ENCRYPTION_KEY`；缺失时应用启动失败。
-- `AIH_API_KEY_ENCRYPTION_KEY` 应使用足够长的随机值。
 - 非本地环境必须修改 `AIH_ADMIN_PASSWORD` 和 `AIH_DEFAULT_API_KEY`。
-- 密钥应放在环境变量或密钥管理系统中，不要提交到仓库。
-- API Key 认证使用 hash；WebUI 重复查看依赖加密存储。
-- 禁用 API Key 后，该 key 会立即无法写入日志。
-- MongoDB 应保持私有，只允许应用访问。
-
-## 故障排查
-
-### 启动失败：缺少 `AIH_API_KEY_ENCRYPTION_KEY`
-
-设置：
-
-```powershell
-$env:AIH_API_KEY_ENCRYPTION_KEY='replace-with-a-long-random-secret'
-```
-
-然后重启应用。
-
-### 端口被占用
-
-设置其他端口：
-
-```powershell
-$env:SERVER_PORT='25092'
-mvn spring-boot:run
-```
-
-Windows 下查看端口占用：
-
-```powershell
-netstat -ano | Select-String ':25091'
-```
-
-### 无法连接 MongoDB
-
-检查：
-
-- 主机和端口是否可达。
-- 用户名和密码是否正确。
-- `authSource` 是否正确。
-- 数据库用户是否有创建集合和索引的权限。
-
-### API 返回 401
-
-检查：
-
-- 是否传了 `X-API-Key`。
-- 该 key 是否存在于 `/ui/api-keys`。
-- 该 key 是否已启用。
-- 使用的是明文 API Key，而不是 hash。
+- 不要提交真实 MongoDB 凭据、管理员密码、API Key 或加密密钥。
+- 不要把 MongoDB 暴露到公网。
+- `/api/logs/**` 应只允许可信服务或 API 网关访问。
 
 ## License
 

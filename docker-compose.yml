@@ -1,0 +1,27 @@
+services:
+  app:
+    image: as-i-have-written:local
+    build:
+      context: .
+    ports:
+      - "${AIH_HTTP_PORT:-25091}:25091"
+    environment:
+      SERVER_PORT: 25091
+      MONGODB_URI: mongodb://mongodb:27017/as_i_have_written
+      AIH_API_KEY_ENCRYPTION_KEY: ${AIH_API_KEY_ENCRYPTION_KEY:?Set AIH_API_KEY_ENCRYPTION_KEY}
+      AIH_ADMIN_USERNAME: ${AIH_ADMIN_USERNAME:-admin}
+      AIH_ADMIN_PASSWORD: ${AIH_ADMIN_PASSWORD:?Set AIH_ADMIN_PASSWORD}
+      AIH_DEFAULT_API_KEY: ${AIH_DEFAULT_API_KEY:?Set AIH_DEFAULT_API_KEY}
+    depends_on:
+      mongodb:
+        condition: service_started
+    restart: unless-stopped
+
+  mongodb:
+    image: mongo:8.2.5
+    volumes:
+      - mongodb_data:/data/db
+    restart: unless-stopped
+
+volumes:
+  mongodb_data:
