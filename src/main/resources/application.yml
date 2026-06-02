@@ -1,0 +1,44 @@
+spring:
+  application:
+    name: As-I-Have-Written
+  threads:
+    virtual:
+      enabled: true
+  mongodb:
+    uri: ${MONGODB_URI:mongodb://localhost:27017/as_i_have_written}
+  data:
+    mongodb:
+      auto-index-creation: true
+  messages:
+    basename: messages
+    encoding: UTF-8
+
+server:
+  port: ${SERVER_PORT:25091}
+
+sa-token:
+  token-name: aih-session
+  timeout: 2592000
+  active-timeout: -1
+  is-concurrent: true
+  is-share: true
+  token-style: uuid
+  is-log: false
+
+aih:
+  admin:
+    username: ${AIH_ADMIN_USERNAME:admin}
+    password: ${AIH_ADMIN_PASSWORD:admin123}
+  security:
+    api-key-encryption-key: ${AIH_API_KEY_ENCRYPTION_KEY}
+  ingest:
+    queue-capacity: ${AIH_INGEST_QUEUE_CAPACITY:10000}
+    batch-size: ${AIH_INGEST_BATCH_SIZE:500}
+    flush-interval: ${AIH_INGEST_FLUSH_INTERVAL:1s}
+    default-service-name: ${AIH_DEFAULT_SERVICE_NAME:default}
+    default-service-display-name: ${AIH_DEFAULT_SERVICE_DISPLAY_NAME:Default}
+    default-instance-name: ${AIH_DEFAULT_INSTANCE_NAME:default}
+    default-api-key: ${AIH_DEFAULT_API_KEY:dev-api-key}
+  service-cleanup:
+    fixed-delay: ${AIH_SERVICE_CLEANUP_FIXED_DELAY:10m}
+    initial-delay: ${AIH_SERVICE_CLEANUP_INITIAL_DELAY:10m}

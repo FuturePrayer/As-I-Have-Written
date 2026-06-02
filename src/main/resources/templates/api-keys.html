@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title th:text="#{apiKeys.title}">API Key 管理</title>
+    <th:block th:replace="~{fragments :: headAssets}"></th:block>
+    <link rel="stylesheet" th:href="@{/css/app.css}">
+</head>
+<body>
+<header th:replace="~{fragments :: topbar}"></header>
+<div class="app-shell">
+    <aside th:replace="~{fragments :: sidebar('apiKeys')}"></aside>
+    <main class="page page-with-sidebar">
+        <header class="page-heading">
+            <h1 th:text="#{apiKeys.title}">API Key 管理</h1>
+            <p th:text="#{apiKeys.subtitle}">创建并管理您的 API Key，用于访问如我所书开放接口服务。</p>
+        </header>
+
+        <section class="api-key-grid">
+            <form class="panel create-key-panel" method="post" action="/ui/api-keys">
+                <div class="panel-title">
+                    <span class="panel-icon">⌘</span>
+                    <div>
+                        <h2 th:text="#{apiKeys.createTitle}">创建新的 API Key</h2>
+                        <p th:text="#{apiKeys.createSubtitle}">填写以下信息以创建新的 API Key</p>
+                    </div>
+                </div>
+
+                <label>
+                    <span th:text="#{apiKeys.serviceName}">服务名称</span>
+                    <input name="serviceName" list="serviceNames" required th:placeholder="#{apiKeys.serviceNamePlaceholder}">
+                    <datalist id="serviceNames">
+                        <option th:each="service : ${services}" th:value="${service.name}" th:text="${service.displayName}"></option>
+                    </datalist>
+                </label>
+                <label>
+                    <span th:text="#{apiKeys.serviceDisplayName}">服务显示名</span>
+                    <input name="serviceDisplayName" th:placeholder="#{apiKeys.serviceDisplayNamePlaceholder}">
+                </label>
+                <label>
+                    <span th:text="#{apiKeys.instanceNameOptional}">实例名称（可选）</span>
+                    <input name="instanceName" th:placeholder="#{apiKeys.instanceNamePlaceholder}" value="default">
+                </label>
+                <p class="error" th:if="${error}" th:text="${error}"></p>
+                <button class="button primary full-width" type="submit">
+                    <span aria-hidden="true">＋</span>
+                    <span th:text="#{apiKeys.create}">创建 API Key</span>
+                </button>
+                <p class="hint" th:text="#{apiKeys.createHelp}">创建后请妥善保存 API Key，不要暴露在客户端代码中。</p>
+            </form>
+
+            <section class="panel generated-panel" th:if="${createdApiKey}">
+                <div class="panel-title">
+                    <span class="panel-icon">✓</span>
+                    <div>
+                        <h2 th:text="#{apiKeys.generated}">新 API Key</h2>
+                        <p th:text="#{apiKeys.generatedSubtitle}">这是新生成的明文 API Key，请确认已保存。</p>
+                    </div>
+                </div>
+                <pre class="secret" th:text="${createdApiKey}"></pre>
+            </section>
+
+            <section class="panel key-list-panel">
+                <div class="panel-toolbar">
+                    <div class="panel-title compact-title">
+                        <span class="panel-icon">⌗</span>
+                        <div>
+                            <h2 th:text="#{apiKeys.listTitle}">API Key 列表</h2>
+                            <p th:text="#{apiKeys.listSubtitle}">查看和管理已创建的 API Key</p>
+                        </div>
+                    </div>
+                    <label class="search-box">
+                        <span class="visually-hidden" th:text="#{apiKeys.searchPlaceholder}">搜索</span>
+                        <input id="apiKeySearch" type="search" th:placeholder="#{apiKeys.searchPlaceholder}">
+                    </label>
+                </div>
+
+                <div class="table-wrap embedded">
+                    <table class="data-table api-key-table">
+                        <thead>
+                        <tr>
+                            <th th:text="#{apiKeys.serviceName}">服务名称</th>
+                            <th th:text="#{apiKeys.serviceDisplay}">服务显示名</th>
+                            <th th:text="#{apiKeys.instance}">实例</th>
+                            <th th:text="#{apiKeys.key}">API Key</th>
+                            <th th:text="#{apiKeys.status}">状态</th>
+                            <th th:text="#{apiKeys.createdAt}">创建时间</th>
+                            <th th:text="#{apiKeys.actions}">操作</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr th:each="source : ${sources}" th:attr="data-search=${source.name() + ' ' + source.serviceName() + ' ' + source.serviceDisplayName() + ' ' + source.instanceName()}">
+                            <td th:text="${source.serviceName()}"></td>
+                            <td th:text="${source.serviceDisplayName()}"></td>
+                            <td th:text="${source.instanceName()}"></td>
+                            <td>
+                                <span class="key-cell">
+                                    <code class="secret-inline" th:attr="data-key=${source.apiKey()},data-mask=${source.maskedApiKey()}" th:text="${source.maskedApiKey()}"></code>
+                                    <button class="icon-button reveal-key" type="button" th:attr="aria-label=#{apiKeys.reveal},data-show=#{apiKeys.reveal},data-hide=#{apiKeys.hide}">◎</button>
+                                </span>
+                            </td>
+                            <td>
+                                <span class="status-pill" th:classappend="${source.enabled()} ? ' enabled' : ' disabled'">
+                                    <span aria-hidden="true"></span>
+                                    <span th:text="${source.enabled()} ? #{apiKeys.enabled} : #{apiKeys.disabled}">启用</span>
+                                </span>
+                            </td>
+                            <td class="mono" th:text="${source.createdAt()}"></td>
+                            <td>
+                                <div class="row-actions">
+                                    <form th:if="${source.enabled()}" method="post" th:action="@{/ui/api-keys/{id}/disable(id=${source.id()})}">
+                                        <button class="button outline small" type="submit" th:text="#{apiKeys.disable}">禁用</button>
+                                    </form>
+                                    <form th:unless="${source.enabled()}" method="post" th:action="@{/ui/api-keys/{id}/enable(id=${source.id()})}">
+                                        <button class="button outline small" type="submit" th:text="#{apiKeys.enable}">启用</button>
+                                    </form>
+                                    <form method="post" th:action="@{/ui/api-keys/{id}/delete(id=${source.id()})}" th:attr="data-confirm=#{apiKeys.confirmDelete}">
+                                        <button class="button danger-outline small delete-key" type="submit" th:text="#{apiKeys.delete}">删除</button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                        <tr th:if="${#lists.isEmpty(sources)}">
+                            <td colspan="7" class="empty" th:text="#{apiKeys.none}">暂无 API Key。</td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </section>
+    </main>
+</div>
+<script>
+document.addEventListener('click', function (event) {
+    const reveal = event.target.closest('.reveal-key');
+    if (reveal) {
+        const code = reveal.parentElement.querySelector('.secret-inline');
+        const isVisible = code.dataset.visible === 'true';
+        if (isVisible) {
+            code.textContent = code.dataset.mask;
+            code.dataset.visible = 'false';
+            reveal.textContent = '◎';
+            reveal.setAttribute('aria-label', reveal.dataset.show);
+        } else {
+            code.textContent = code.dataset.key;
+            code.dataset.visible = 'true';
+            reveal.textContent = '◌';
+            reveal.setAttribute('aria-label', reveal.dataset.hide);
+        }
+    }
+    const deleteButton = event.target.closest('.delete-key');
+    if (deleteButton) {
+        const form = deleteButton.closest('form');
+        if (!confirm(form.dataset.confirm)) {
+            event.preventDefault();
+        }
+    }
+});
+
+document.getElementById('apiKeySearch')?.addEventListener('input', function (event) {
+    const keyword = event.target.value.trim().toLowerCase();
+    document.querySelectorAll('.api-key-table tbody tr[data-search]').forEach(function (row) {
+        row.hidden = keyword !== '' && !row.dataset.search.toLowerCase().includes(keyword);
+    });
+});
+</script>
+</body>
+</html>

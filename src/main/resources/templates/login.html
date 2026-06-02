@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>As I Have Written</title>
+    <th:block th:replace="~{fragments :: headAssets}"></th:block>
+    <link rel="stylesheet" th:href="@{/css/app.css}">
+</head>
+<body class="login-page">
+<main class="login-shell">
+    <section class="login-panel">
+        <img class="login-logo" th:src="@{/images/logo.png}" alt="As I Have Written">
+        <h1 th:text="#{login.title}">Log Console</h1>
+        <form method="post" action="/auth/login" class="stack">
+            <input type="hidden" name="redirect" th:value="${redirect}">
+            <label>
+                <span th:text="#{login.username}">Username</span>
+                <input name="username" autocomplete="username" required autofocus>
+            </label>
+            <label>
+                <span th:text="#{login.password}">Password</span>
+                <input name="password" type="password" autocomplete="current-password" required>
+            </label>
+            <p class="error" th:if="${error}" th:text="${error}"></p>
+            <button type="submit" th:text="#{login.submit}">Sign in</button>
+        </form>
+    </section>
+</main>
+</body>
+</html>

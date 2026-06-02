@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<body>
+<th:block th:fragment="headAssets">
+    <link rel="icon" type="image/x-icon" th:href="@{/favicon.ico}">
+    <link rel="icon" type="image/png" sizes="32x32" th:href="@{/favicon-32x32.png}">
+    <link rel="apple-touch-icon" sizes="180x180" th:href="@{/apple-touch-icon.png}">
+</th:block>
+
+<header class="topbar" th:fragment="topbar">
+    <a class="brand" href="/ui/logs">
+        <img class="brand-logo" th:src="@{/images/logo.png}" alt="" aria-hidden="true">
+        <span th:text="#{app.name}">如我所书</span>
+    </a>
+    <nav class="topnav" aria-label="primary">
+        <a href="/ui/logs" th:text="#{nav.logs}">日志</a>
+        <a href="/ui/api-keys" th:text="#{nav.apiKeys}">API Key</a>
+        <a href="/ui/cleanup" th:text="#{nav.cleanup}">清理</a>
+        <a href="https://github.com/FuturePrayer/As-I-Have-Written" target="_blank" rel="noreferrer" th:text="#{nav.source}">源码</a>
+        <a class="button secondary nav-language" th:href="@{/ui/language(lang=${#locale.language == 'zh' ? 'en' : 'zh_CN'},redirect=${currentPath})}" th:text="#{nav.language}">English</a>
+        <form method="post" action="/auth/logout">
+            <button class="ghost nav-signout" type="submit" th:text="#{nav.signOut}">退出</button>
+        </form>
+    </nav>
+</header>
+
+<aside class="sidebar" th:fragment="sidebar(active)">
+    <nav class="sidenav" aria-label="section">
+        <a th:classappend="${active == 'apiKeys'} ? ' active'" href="/ui/api-keys">
+            <span class="nav-icon">⌘</span>
+            <span th:text="#{side.apiKeys}">API Key 管理</span>
+        </a>
+        <a th:classappend="${active == 'logs'} ? ' active'" href="/ui/logs">
+            <span class="nav-icon">▣</span>
+            <span th:text="#{side.logs}">使用日志</span>
+        </a>
+        <a th:classappend="${active == 'cleanup'} ? ' active'" href="/ui/cleanup">
+            <span class="nav-icon">⌫</span>
+            <span th:text="#{side.cleanup}">清理记录</span>
+        </a>
+    </nav>
+    <section class="security-note">
+        <div class="security-head">
+            <span class="shield-icon">◇</span>
+            <strong th:text="#{side.securityTitle}">API Key 安全提示</strong>
+        </div>
+        <p th:text="#{side.securityBody}">请妥善保管您的 API Key，不要与他人共享，或暴露在客户端代码中。</p>
+    </section>
+</aside>
+</body>
+</html>

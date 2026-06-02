@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title th:text="#{logs.title}">日志</title>
+    <th:block th:replace="~{fragments :: headAssets}"></th:block>
+    <link rel="stylesheet" th:href="@{/css/app.css}">
+</head>
+<body>
+<header th:replace="~{fragments :: topbar}"></header>
+<div class="app-shell">
+    <aside th:replace="~{fragments :: sidebar('logs')}"></aside>
+    <main class="page page-with-sidebar">
+        <header class="page-heading">
+            <h1 th:text="#{logs.heading}">使用日志</h1>
+            <p th:text="#{logs.subtitle}">查看 API Key 的使用记录与调用详情。</p>
+        </header>
+
+        <form class="panel filter-grid" method="get" action="/ui/logs">
+            <label><span th:text="#{logs.from}">开始时间</span><input type="datetime-local" name="from" th:value="${filters.from()}"></label>
+            <label><span th:text="#{logs.to}">结束时间</span><input type="datetime-local" name="to" th:value="${filters.to()}"></label>
+            <label><span th:text="#{logs.service}">服务</span>
+                <select name="service" required>
+                    <option th:each="item : ${services}" th:value="${item.name}" th:text="${item.displayName}" th:selected="${item.name == filters.service()}"></option>
+                </select>
+            </label>
+            <label><span th:text="#{logs.instance}">实例</span><input name="instanceName" th:value="${filters.instanceName()}" th:placeholder="#{logs.instancePlaceholder}"></label>
+            <label><span th:text="#{logs.environment}">环境</span><input name="environment" th:value="${filters.environment()}" th:placeholder="#{logs.environmentPlaceholder}"></label>
+            <label><span th:text="#{logs.level}">级别</span>
+                <select name="level">
+                    <option value="" th:text="#{logs.any}">任意</option>
+                    <option th:each="level : ${levels}" th:value="${level}" th:text="${level}" th:selected="${level == filters.level()}"></option>
+                </select>
+            </label>
+            <label><span th:text="#{logs.trace}">Trace</span><input name="traceId" th:value="${filters.traceId()}" th:placeholder="#{logs.tracePlaceholder}"></label>
+            <label><span th:text="#{logs.source}">来源</span><input name="sourceId" th:value="${filters.sourceId()}" th:placeholder="#{logs.sourcePlaceholder}"></label>
+            <label><span th:text="#{logs.tokens}">关键词</span><input name="q" th:value="${filters.q()}" th:placeholder="#{logs.tokensPlaceholder}"></label>
+            <label><span th:text="#{logs.size}">每页数量</span><input type="number" min="1" max="200" name="size" th:value="${filters.size()}"></label>
+            <label th:each="key : ${metadataKeys}"><span th:text="${key}">metadata</span><input th:name="${'meta_' + key}" th:value="${metadataFilters.get(key)}"></label>
+            <div class="filter-actions">
+                <button class="button primary" type="submit" th:text="#{logs.search}">查询</button>
+                <a class="button outline" href="/ui/logs" th:text="#{logs.reset}">重置</a>
+            </div>
+        </form>
+
+        <section class="panel logs-table-panel">
+            <div class="table-wrap embedded">
+                <table class="data-table logs-table">
+                    <thead>
+                    <tr>
+                        <th th:text="#{logs.time}">时间</th>
+                        <th th:text="#{logs.level}">级别</th>
+                        <th th:text="#{logs.service}">服务</th>
+                        <th th:text="#{logs.instance}">实例</th>
+                        <th th:text="#{logs.environment}">环境</th>
+                        <th th:text="#{logs.trace}">TRACE</th>
+                        <th th:text="#{logs.message}">消息</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="entry : ${entries.content}">
+                        <td class="mono" th:text="${entry.eventTime}"></td>
+                        <td><span class="level" th:classappend="${entry.level}" th:text="${entry.level}"></span></td>
+                        <td th:text="${entry.service}"></td>
+                        <td th:text="${entry.instanceName} ?: '-'"></td>
+                        <td th:text="${entry.environment}"></td>
+                        <td class="mono compact" th:text="${entry.traceId} ?: '-'"></td>
+                        <td><a th:href="@{/ui/logs/{id}(id=${entry.id})}" th:text="${entry.message}"></a></td>
+                    </tr>
+                    <tr th:if="${entries.empty}">
+                        <td colspan="7">
+                            <div class="empty-state">
+                                <div class="empty-illustration" aria-hidden="true">
+                                    <span class="empty-board"></span>
+                                    <span class="empty-lens"></span>
+                                </div>
+                                <p th:text="#{logs.noData}">没有匹配的日志。</p>
+                            </div>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <footer class="pager">
+            <span th:text="#{logs.page(${entries.number} + 1, ${entries.totalPages == 0 ? 1 : entries.totalPages})}"></span>
+            <a class="page-button" th:classappend="${!entries.hasPrevious()} ? ' disabled'" th:href="${entries.hasPrevious()} ? ${previousPageUrl} : '#'" aria-label="previous">‹</a>
+            <span class="page-current" th:text="${entries.number + 1}">1</span>
+            <a class="page-button" th:classappend="${!entries.hasNext()} ? ' disabled'" th:href="${entries.hasNext()} ? ${nextPageUrl} : '#'" aria-label="next">›</a>
+        </footer>
+    </main>
+</div>
+</body>
+</html>

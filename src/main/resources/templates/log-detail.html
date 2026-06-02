@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Log Detail</title>
+    <th:block th:replace="~{fragments :: headAssets}"></th:block>
+    <link rel="stylesheet" th:href="@{/css/app.css}">
+</head>
+<body>
+<header th:replace="~{fragments :: topbar}"></header>
+<main class="page detail-page">
+    <a class="back" href="/ui/logs" th:text="#{detail.back}">Back to logs</a>
+    <section class="detail-head">
+        <span class="level" th:classappend="${entry.level}" th:text="${entry.level}"></span>
+        <h1 th:text="${entry.service}"></h1>
+        <p class="mono" th:text="${entry.eventTime}"></p>
+    </section>
+    <section class="detail-grid">
+        <div>
+            <h2 th:text="#{detail.message}">Message</h2>
+            <pre th:text="${entry.message}"></pre>
+        </div>
+        <div>
+            <h2 th:text="#{detail.fields}">Fields</h2>
+            <dl>
+                <dt th:text="#{logs.instance}">Instance</dt><dd th:text="${entry.instanceName} ?: '-'"></dd>
+                <dt th:text="#{detail.environment}">Environment</dt><dd th:text="${entry.environment}"></dd>
+                <dt th:text="#{detail.traceId}">Trace ID</dt><dd class="mono" th:text="${entry.traceId} ?: '-'"></dd>
+                <dt th:text="#{detail.spanId}">Span ID</dt><dd class="mono" th:text="${entry.spanId} ?: '-'"></dd>
+                <dt th:text="#{detail.sourceId}">Source ID</dt><dd class="mono" th:text="${entry.sourceId}"></dd>
+                <dt th:text="#{detail.channel}">Channel</dt><dd th:text="${entry.ingestChannel}"></dd>
+                <dt th:text="#{detail.received}">Received</dt><dd class="mono" th:text="${entry.receivedAt}"></dd>
+            </dl>
+        </div>
+        <div>
+            <h2 th:text="#{detail.tokens}">Tokens</h2>
+            <div class="chips">
+                <span th:each="token : ${entry.tokens}" th:text="${token}"></span>
+            </div>
+        </div>
+        <div>
+            <h2 th:text="#{detail.metadata}">Metadata</h2>
+            <pre th:text="${entry.metadata}"></pre>
+        </div>
+    </section>
+</main>
+</body>
+</html>

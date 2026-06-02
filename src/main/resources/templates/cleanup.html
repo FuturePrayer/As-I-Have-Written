@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title th:text="#{cleanup.title}">清理记录</title>
+    <th:block th:replace="~{fragments :: headAssets}"></th:block>
+    <link rel="stylesheet" th:href="@{/css/app.css}">
+</head>
+<body>
+<header th:replace="~{fragments :: topbar}"></header>
+<div class="app-shell">
+    <aside th:replace="~{fragments :: sidebar('cleanup')}"></aside>
+    <main class="page page-with-sidebar narrow-content">
+        <header class="page-heading">
+            <h1 th:text="#{cleanup.heading}">清理记录</h1>
+            <p th:text="#{cleanup.subtitle}">删除指定时间之前的日志，并自动清理没有 API Key 且没有日志的服务。</p>
+        </header>
+        <section class="panel cleanup-panel">
+            <form method="post" action="/ui/cleanup" class="stack">
+                <label>
+                    <span th:text="#{cleanup.before}">删除此时间之前的日志</span>
+                    <input type="datetime-local" name="before" required>
+                </label>
+                <button class="button primary" type="submit" th:text="#{cleanup.delete}">删除</button>
+            </form>
+            <p class="notice" th:if="${deleted != null}" th:text="#{cleanup.deleted(${deleted})}"></p>
+        </section>
+    </main>
+</div>
+</body>
+</html>
